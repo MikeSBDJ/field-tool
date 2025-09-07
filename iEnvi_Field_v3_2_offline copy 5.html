@@ -191,7 +191,7 @@
       <div class="panel">
         <div class="row" style="align-items:center;">
           <h2 class="col">Quick Help</h2>
-          <button class="btn btn-ghost" onclick="closeModal('help-modal')">Close</button>
+          <button id="btn-close-help-modal" class="btn btn-ghost">Close</button>
         </div>
         <div class="card">
           <h3>1) Location</h3>
@@ -226,7 +226,7 @@
       <div class="panel">
         <div class="row" style="align-items:center;">
           <h2 class="col">Offline Maps & Overlays</h2>
-          <button class="btn btn-ghost" onclick="closeModal('offline-modal')">Close</button>
+          <button id="btn-close-offline-modal" class="btn btn-ghost">Close</button>
         </div>
         <div class="card">
           <p>Upload one of the following:</p>
@@ -236,7 +236,7 @@
           </ul>
           <div class="row">
             <input id="file-overlay" type="file" accept=".kml,.kmz,.geojson,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" class="col">
-            <button class="btn btn-primary" onclick="handleOverlayUpload()">Add to Map</button>
+            <button id="btn-handle-overlay-upload" class="btn btn-primary">Add to Map</button>
           </div>
           <small class="muted">Note: This does not download Nearmap/Google imagery. For imagery, export a <b>KMZ Ground Overlay</b> from Google Earth (it embeds an image), or consult your licensed imagery provider to export an <b>MBTiles</b> / tile package your team is allowed to carry offline.</small>
         </div>
@@ -248,8 +248,8 @@
             <div class="col right"><label class="muted" style="user-select:none;"><input id="chk-cache-multizoom" type="checkbox" checked> Include nearby zooms (±1)</label></div>
           </div>
           <div class="row">
-            <button class="btn btn-accent col" onclick="precacheCurrentView()">Pre‑cache current view</button>
-            <button class="btn btn-ghost col" onclick="clearTileCache()">Clear cached tiles</button>
+            <button id="btn-precache-current-view" class="btn btn-accent col">Pre‑cache current view</button>
+            <button id="btn-clear-tile-cache" class="btn btn-ghost col">Clear cached tiles</button>
           </div>
           <small class="muted">Respect tile providers’ terms of use. Caching covers the current map window. For imagery-wide offline use, upload a KMZ Ground Overlay.</small>
         </div>
@@ -275,7 +275,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <span class="pill">Saved: <span id="pin-count-top">0</span></span>
         <span id="net-chip" class="pill">Detecting</span>
-        <button class="btn btn-ghost btn-icon" title="Quick help" onclick="openModal('help-modal')"><i class="fa-solid fa-circle-question"></i></button>
+        <button id="btn-open-help-modal" class="btn btn-ghost btn-icon" title="Quick help"><i class="fa-solid fa-circle-question"></i></button>
       </div>
     </header>
 
@@ -317,7 +317,7 @@
       </div>
       <div class="row" style="margin-top:8px;">
         <div class="col muted">Status: <span id="net-status" class="pill">…</span></div>
-        <div class="col right"><button class="btn btn-ghost" onclick="openModal('offline-modal')">Offline Maps & Pre‑cache</button></div>
+        <div class="col right"><button id="btn-open-offline-modal" class="btn btn-ghost">Offline Maps & Pre‑cache</button></div>
       </div>
       <div style="margin-top:6px;">
         <small id="save-target" class="muted">Saving to: This device (local browser storage). <span id="save-target-action"></span></small>
@@ -1122,12 +1122,18 @@
       img.src = p.dataUrl; img.className = 'thumb'; img.style.width='86px'; img.style.height='86px';
       const cap = document.createElement('small'); cap.textContent=p.caption || 'Photo'; cap.className='muted';
       const bar = document.createElement('div'); bar.style.display='flex'; bar.style.gap='6px';
-      const btnEdit = document.createElement('button'); btnEdit.className='btn btn-ghost btn-icon'; btnEdit.textContent='✏️'; btnEdit.onclick = ()=>{
+      const btnEdit = document.createElement('button'); 
+      btnEdit.className='btn btn-ghost btn-icon'; 
+      btnEdit.textContent='✏️'; 
+      btnEdit.addEventListener('click', ()=>{
         const nv = prompt('Caption', p.caption || '') || 'Photo'; p.caption = nv; renderGallery();
-      };
-      const btnDel = document.createElement('button'); btnDel.className='btn btn-ghost btn-icon'; btnDel.textContent='🗑'; btnDel.onclick = ()=>{
+      });
+      const btnDel = document.createElement('button'); 
+      btnDel.className='btn btn-ghost btn-icon'; 
+      btnDel.textContent='🗑'; 
+      btnDel.addEventListener('click', ()=>{
         if (confirm('Remove this photo?')){ currentPhotos = currentPhotos.filter(x=>x.id!==p.id); renderGallery(); }
-      };
+      });
       bar.appendChild(btnEdit); bar.appendChild(btnDel);
       wrap.appendChild(img); wrap.appendChild(cap); wrap.appendChild(bar);
       g.appendChild(wrap);
@@ -1145,8 +1151,23 @@
       const img = document.createElement('img'); img.src=p.dataUrl; img.className='thumb'; img.style.width='86px'; img.style.height='86px';
       const cap = document.createElement('small'); cap.textContent=p.caption||'Photo'; cap.className='muted';
       const bar = document.createElement('div'); bar.style.display='flex'; bar.style.gap='6px';
-      const btnEdit = document.createElement('button'); btnEdit.className='btn btn-ghost btn-icon'; btnEdit.textContent='✏️'; btnEdit.onclick=()=>{ const nv=prompt('Caption', p.caption||'')||'Photo'; p.caption=nv; renderLayerGallery(layerId); };
-      const btnDel = document.createElement('button'); btnDel.className='btn btn-ghost btn-icon'; btnDel.textContent='🗑'; btnDel.onclick=()=>{ if (confirm('Remove this photo?')){ layerPhotos[layerId]=arr.filter(x=>x.id!==p.id); renderLayerGallery(layerId);} };
+      const btnEdit = document.createElement('button'); 
+      btnEdit.className='btn btn-ghost btn-icon'; 
+      btnEdit.textContent='✏️'; 
+      btnEdit.addEventListener('click', ()=>{ 
+        const nv=prompt('Caption', p.caption||'')||'Photo'; 
+        p.caption=nv; 
+        renderLayerGallery(layerId); 
+      });
+      const btnDel = document.createElement('button'); 
+      btnDel.className='btn btn-ghost btn-icon'; 
+      btnDel.textContent='🗑'; 
+      btnDel.addEventListener('click', ()=>{ 
+        if (confirm('Remove this photo?')){ 
+          layerPhotos[layerId]=arr.filter(x=>x.id!==p.id); 
+          renderLayerGallery(layerId);
+        } 
+      });
       bar.appendChild(btnEdit); bar.appendChild(btnDel);
       wrap.appendChild(img); wrap.appendChild(cap); wrap.appendChild(bar); g.appendChild(wrap);
     }
@@ -1305,7 +1326,7 @@
     div.innerHTML = `
       <div class="row" style="align-items:center;">
         <h3 class="col">Layer ${layerCount}</h3>
-        <button class="btn btn-ghost" onclick="removeLayer(${layerCount})">Remove</button>
+        <button class="btn btn-ghost" data-remove-layer="${layerCount}">Remove</button>
       </div>
       <div class="grid">
         <div class="g-6"><label>Depth From (mbgs)</label><input class="ly-from" type="number" step="0.1" value="${def(data && data.depthFrom, (layerCount===1?'0.0':''))}"></div>
@@ -1346,9 +1367,9 @@
         <div id="sam-${layerCount}" class="hide">
           <div id="samc-${layerCount}"></div>
           <div class="row">
-            <button class="btn btn-primary col" onclick="addPrimary(${layerCount})">+ Primary</button>
-            <button class="btn btn-dark col" onclick="addQS(${layerCount})">+ Field duplicate (QS)</button>
-            <button class="btn btn-accent col" onclick="addQSSplit(${layerCount})">+ Split duplicate (QS A)</button>
+            <button class="btn btn-primary col" data-add-primary="${layerCount}">+ Primary</button>
+            <button class="btn btn-dark col" data-add-qs="${layerCount}">+ Field duplicate (QS)</button>
+            <button class="btn btn-accent col" data-add-qs-split="${layerCount}">+ Split duplicate (QS A)</button>
           </div>
         </div>
       </div>
@@ -1383,6 +1404,19 @@
     attachMic(div.querySelector('.ly-mic-pacm2'), div.querySelector(`#ly-pacm2-${layerCount}`), true);
     // per-layer photos
     (function(){ const pbtn = div.querySelector('#btn-ly-photo-' + layerCount); const pinp = div.querySelector('#ly-photo-input-' + layerCount); if (pbtn && pinp){ pbtn.addEventListener('click', ()=> pinp.click()); pinp.addEventListener('change', (e)=> onLayerPhotosSelected(e, layerCount)); } })();
+    
+    // Layer action buttons
+    const removeBtn = div.querySelector(`[data-remove-layer="${layerCount}"]`);
+    if (removeBtn) removeBtn.addEventListener('click', ()=> removeLayer(layerCount));
+    
+    const addPrimaryBtn = div.querySelector(`[data-add-primary="${layerCount}"]`);
+    if (addPrimaryBtn) addPrimaryBtn.addEventListener('click', ()=> addPrimary(layerCount));
+    
+    const addQSBtn = div.querySelector(`[data-add-qs="${layerCount}"]`);
+    if (addQSBtn) addQSBtn.addEventListener('click', ()=> addQS(layerCount));
+    
+    const addQSSplitBtn = div.querySelector(`[data-add-qs-split="${layerCount}"]`);
+    if (addQSSplitBtn) addQSSplitBtn.addEventListener('click', ()=> addQSSplit(layerCount));
     // restore sample IDs
     if (data && data.sampleIds && data.sampleIds.length){
       const cont = div.querySelector(`#samc-${layerCount}`);
@@ -1391,7 +1425,10 @@
         var row = document.createElement('div'); row.className='field';
         var val = sid && sid.id ? sid.id : '';
         var typ = sid && sid.type ? sid.type : 'primary';
-        row.innerHTML = `<input class="samid" type="text" value="${val}" data-type="${typ}"><button class="btn btn-ghost btn-icon" onclick="this.parentElement.remove()">✖️</button>`;
+        row.innerHTML = `<input class="samid" type="text" value="${val}" data-type="${typ}"><button class="btn btn-ghost btn-icon" data-remove-sample>✖️</button>`;
+        // Add event listener for remove button
+        const removeBtn = row.querySelector('[data-remove-sample]');
+        if (removeBtn) removeBtn.addEventListener('click', function() { this.parentElement.remove(); });
         cont.appendChild(row);
       }
       chk.checked = true; sync();
@@ -1402,29 +1439,65 @@
     if (el && confirm('Remove this layer?')) el.remove();
   };
   window.addPrimary = (id)=>{
-    const layer = document.querySelector(`#layers .card[data-layer-id="${id}"]`);
-    const cont = layer.querySelector(`#samc-${id}`);
+    // Find the layer with the matching layerId
+    const layers = document.querySelectorAll('#layers .card');
+    let targetLayer = null;
+    for (let i = 0; i < layers.length; i++) {
+      if (layers[i].dataset.layerId === String(id)) {
+        targetLayer = layers[i];
+        break;
+      }
+    }
+    if (!targetLayer) return;
+    const cont = targetLayer.querySelector(`#samc-${id}`);
     const pre = $('prefix').value || 'BH';
     const num = $('number').value || '01';
-    const dTo = (layer.querySelector('.ly-to').value || '0.0');
+    const dTo = (targetLayer.querySelector('.ly-to').value || '0.0');
     const sid = `${pre}${num}/${dTo}`;
-    const row = document.createElement('div'); row.className='field'; row.innerHTML = `<input class="samid" type="text" value="${sid}" data-type="primary"><button class="btn btn-ghost btn-icon" onclick="this.parentElement.remove()">✖️</button>`;
+    const row = document.createElement('div'); row.className='field'; 
+    row.innerHTML = `<input class="samid" type="text" value="${sid}" data-type="primary"><button class="btn btn-ghost btn-icon" data-remove-sample>✖️</button>`;
+    const removeBtn = row.querySelector('[data-remove-sample]');
+    if (removeBtn) removeBtn.addEventListener('click', function() { this.parentElement.remove(); });
     cont.appendChild(row);
   };
   window.addQS = (id)=>{
-    const layer = document.querySelector(`#layers .card[data-layer-id="${id}"]`);
-    const cont = layer.querySelector(`#samc-${id}`);
+    // Find the layer with the matching layerId
+    const layers = document.querySelectorAll('#layers .card');
+    let targetLayer = null;
+    for (let i = 0; i < layers.length; i++) {
+      if (layers[i].dataset.layerId === String(id)) {
+        targetLayer = layers[i];
+        break;
+      }
+    }
+    if (!targetLayer) return;
+    const cont = targetLayer.querySelector(`#samc-${id}`);
     const sidNum = String(qsNext).padStart(2,'0');
     const sid = `QS${sidNum}`; qsNext++; lastQSForSplit = sidNum;
-    const row = document.createElement('div'); row.className='field'; row.innerHTML = `<input class="samid" type="text" value="${sid}" data-type="qs"><button class="btn btn-ghost btn-icon" onclick="this.parentElement.remove()">✖️</button>`;
+    const row = document.createElement('div'); row.className='field'; 
+    row.innerHTML = `<input class="samid" type="text" value="${sid}" data-type="qs"><button class="btn btn-ghost btn-icon" data-remove-sample>✖️</button>`;
+    const removeBtn = row.querySelector('[data-remove-sample]');
+    if (removeBtn) removeBtn.addEventListener('click', function() { this.parentElement.remove(); });
     cont.appendChild(row);
   };
   window.addQSSplit = (id)=>{
-    const layer = document.querySelector(`#layers .card[data-layer-id="${id}"]`);
-    const cont = layer.querySelector(`#samc-${id}`);
+    // Find the layer with the matching layerId
+    const layers = document.querySelectorAll('#layers .card');
+    let targetLayer = null;
+    for (let i = 0; i < layers.length; i++) {
+      if (layers[i].dataset.layerId === String(id)) {
+        targetLayer = layers[i];
+        break;
+      }
+    }
+    if (!targetLayer) return;
+    const cont = targetLayer.querySelector(`#samc-${id}`);
     const useNum = lastQSForSplit || String(qsNext).padStart(2,'0');
     const sid = `QS${useNum}A`;
-    const row = document.createElement('div'); row.className='field'; row.innerHTML = `<input class="samid" type="text" value="${sid}" data-type="qs"><button class="btn btn-ghost btn-icon" onclick="this.parentElement.remove()">✖️</button>`;
+    const row = document.createElement('div'); row.className='field'; 
+    row.innerHTML = `<input class="samid" type="text" value="${sid}" data-type="qs"><button class="btn btn-ghost btn-icon" data-remove-sample>✖️</button>`;
+    const removeBtn = row.querySelector('[data-remove-sample]');
+    if (removeBtn) removeBtn.addEventListener('click', function() { this.parentElement.remove(); });
     cont.appendChild(row);
   };
 
@@ -1619,11 +1692,11 @@
       const thumb = (p.photos && p.photos[0]) ? `<img class="thumb" src="${p.photos[0].dataUrl}" style="width:56px;height:56px;border-radius:12px;">` : `<div class="pin" style="background:${sty.color}">${p.id}</div>`;
       const left = document.createElement('div'); left.style.display='flex'; left.style.alignItems='center'; left.style.gap='10px'; left.innerHTML = thumb + `<div><div class="bold">${p.id} <small class="meta">(${p.type})</small></div><div class="meta">${p.userNotes || '—'}</div></div>`;
       const btns = document.createElement('div'); btns.style.display='flex'; btns.style.gap='6px';
-      const bEdit = document.createElement('button'); bEdit.className='btn btn-ghost btn-icon'; bEdit.innerHTML='<i class="fa-solid fa-pen"></i>'; bEdit.title='Edit'; bEdit.onclick = ()=>{ loadRecordForEdit(p.id); };
-      const bZoom = document.createElement('button'); bZoom.className='btn btn-ghost btn-icon'; bZoom.innerHTML='<i class="fa-solid fa-bullseye"></i>'; bZoom.title='Zoom'; bZoom.onclick = ()=>{ if (map) { map.flyTo([p.lat,p.lng], 18); } };
-      const bDel = document.createElement('button'); bDel.className='btn btn-ghost btn-icon'; bDel.innerHTML='<i class="fa-solid fa-trash"></i>'; bDel.title='Delete'; bDel.onclick= async ()=>{
+      const bEdit = document.createElement('button'); bEdit.className='btn btn-ghost btn-icon'; bEdit.innerHTML='<i class="fa-solid fa-pen"></i>'; bEdit.title='Edit'; bEdit.addEventListener('click', ()=>{ loadRecordForEdit(p.id); });
+      const bZoom = document.createElement('button'); bZoom.className='btn btn-ghost btn-icon'; bZoom.innerHTML='<i class="fa-solid fa-bullseye"></i>'; bZoom.title='Zoom'; bZoom.addEventListener('click', ()=>{ if (map) { map.flyTo([p.lat,p.lng], 18); } });
+      const bDel = document.createElement('button'); bDel.className='btn btn-ghost btn-icon'; bDel.innerHTML='<i class="fa-solid fa-trash"></i>'; bDel.title='Delete'; bDel.addEventListener('click', async ()=>{
         if (confirm(`Delete ${p.id}?`)){ await pinDB.deletePin(p.id); pins = pins.filter(x=>x.id!==p.id); await renderPins(); showToast('Deleted', 'success'); }
-      };
+      });
       btns.appendChild(bEdit); btns.appendChild(bZoom); btns.appendChild(bDel);
       li.appendChild(left); li.appendChild(btns);
       ul.appendChild(li);
@@ -2250,6 +2323,17 @@
     $('btn-search').addEventListener('click', searchAddress);
     $('address').addEventListener('keyup', (e)=>{ if (e.key==='Enter') searchAddress(); });
     const precBtn = document.getElementById('btn-precache-inline'); if (precBtn) precBtn.addEventListener('click', ()=> precacheCurrentView(false));
+
+    // Modal event listeners
+    if ($('btn-close-help-modal')) $('btn-close-help-modal').addEventListener('click', ()=> closeModal('help-modal'));
+    if ($('btn-close-offline-modal')) $('btn-close-offline-modal').addEventListener('click', ()=> closeModal('offline-modal'));
+    if ($('btn-open-help-modal')) $('btn-open-help-modal').addEventListener('click', ()=> openModal('help-modal'));
+    if ($('btn-open-offline-modal')) $('btn-open-offline-modal').addEventListener('click', ()=> openModal('offline-modal'));
+    
+    // Overlay and cache event listeners
+    if ($('btn-handle-overlay-upload')) $('btn-handle-overlay-upload').addEventListener('click', handleOverlayUpload);
+    if ($('btn-precache-current-view')) $('btn-precache-current-view').addEventListener('click', ()=> precacheCurrentView());
+    if ($('btn-clear-tile-cache')) $('btn-clear-tile-cache').addEventListener('click', clearTileCache);
 
     $('btn-myloc').addEventListener('click', useMyLocation);
     $('btn-accuracy').addEventListener('click', improveAccuracy);
