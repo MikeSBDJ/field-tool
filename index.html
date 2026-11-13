@@ -2923,22 +2923,11 @@
 
   async function geocodeAddressForEmergency(address) {
     if (!address || !APP_CONFIG.GOOGLE_API_KEY) return null;
-    const cacheKey = `geocode_emergency_${address}`;
     try {
-      const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
-      if (cached && cached.ts && (Date.now() - cached.ts) < 86400000) {
-        return cached.coords;
-      }
-    } catch(_){}
-    try {
-      const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${APP_CONFIG.GOOGLE_API_KEY}`);
-      const data = await resp.json();
-      const loc = data?.results?.[0]?.geometry?.location;
-      if (loc && typeof loc.lat === 'number' && typeof loc.lng === 'number') {
-        const coords = { lat: loc.lat, lng: loc.lng };
-        try { sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), coords })); } catch(_){}
-        return coords;
-      }
+      const geo = ienviGeocoder();
+      if (!geo) return null;
+      const looked = await geo.geocode(address);
+      if (looked.ok && looked.result) return { lat: looked.result.lat, lng: looked.result.lng };
     } catch(e) {
       console.warn('Emergency geocode failed', e);
     }
@@ -2984,14 +2973,8 @@
       return;
     }
 
-    // Check if Google Places library is loaded
-    if (!window.google || !google.maps || !google.maps.places) {
-      showToast('Google Places library still loading. Please wait a moment and try again.', 'warn');
-      console.warn('Google Places library not ready:', {
-        google: !!window.google,
-        maps: !!(window.google && google.maps),
-        places: !!(window.google && google.maps && google.maps.places)
-      });
+    if (!APP_CONFIG.GOOGLE_API_KEY) {
+      showToast('Hospital lookup needs a Google Maps API key. Add it in Settings. You can type the hospital in by hand.', 'warn');
       return;
     }
 
@@ -3013,6 +2996,8 @@
         });
 
         showToast(`Found: ${hospital.name} (${hospital.distance?.toFixed(1) || '?'} km)`, 'success');
+      } else if (!(window.google && google.maps && google.maps.places)) {
+        showToast('Google Places did not load. Check the Maps key and its HTTP referrer restriction.', 'warn');
       } else {
         showToast('No hospitals found nearby. Try entering manually.', 'warn');
       }
@@ -3026,6 +3011,16 @@
   // Find nearest hospital using Google Places JavaScript SDK
   // Note: REST API doesn't work from browsers due to CORS - must use JS SDK
   async function findNearestHospitalViaGoogle(lat, lng) {
+    if (!APP_CONFIG.GOOGLE_API_KEY) return null;
+    if (window.IenviMaps && window.localStorage) {
+      try {
+        const cachedHospital = IenviMaps.placesCacheGet(localStorage, 'hospital', lat, lng);
+        if (cachedHospital && cachedHospital.name) return cachedHospital;
+      } catch (_) {}
+    }
+    if (!window.google || !google.maps || !google.maps.places) {
+      try { await ensureMapsPlacesLoaded(); } catch (_) {}
+    }
     // Check if Google Maps Places library is loaded
     if (!window.google || !google.maps || !google.maps.places) {
       console.warn('Google Places library not loaded');
@@ -3102,14 +3097,18 @@
             const distance = haversineDistance(lat, lng, hospitalLat, hospitalLng);
             console.log(`🏥 Nearest hospital: ${hospitalName} (${distance.toFixed(1)} km away)`);
 
-            resolve({
+            const hospitalResult = {
               name: hospitalName,
               address: hospitalAddress,
               phone: hospitalPhone,
               lat: hospitalLat,
               lng: hospitalLng,
               distance: distance
-            });
+            };
+            try {
+              if (window.IenviMaps) IenviMaps.placesCachePut(localStorage, 'hospital', lat, lng, hospitalResult);
+            } catch (_) {}
+            resolve(hospitalResult);
           });
         });
 
@@ -4488,7 +4487,10 @@
           <div class="step-indicator" id="step-2-indicator">2</div>
           <div class="step-body">
             <div class="step-title">Site Location</div>
-            <div style="font-size:12px; color:#6b7280; margin-top:2px;">Use GPS or tap the map to set your site location</div>
+            <div id="site-location-hint" style="font-size:12px; margin-top:2px; line-height:1.45; padding-right:56px;">
+              <span id="address-search-disabled" role="status" style="color:#92400e;">Address search is off. No Google Maps API key is saved in this browser. GPS, the map, and coordinates still work.</span>
+              <button type="button" id="btn-open-maps-key-settings" style="margin-left:6px; background:transparent; color:#92400e; border:0; padding:0; font-size:12px; font-weight:700; text-decoration:underline; cursor:pointer;">Add Maps key</button>
+            </div>
             <!-- Existing sites button — shown when project has saved sites -->
             <button id="btn-select-existing-site" onclick="if(typeof showSiteSelectionPrompt==='function') showSiteSelectionPrompt();" class="action-btn" style="display:none; width:100%; padding:12px 16px; font-size:15px; background:linear-gradient(135deg,#3b82f6,#2563eb); color:white; margin-bottom:8px; justify-content:center;" title="Select from previously saved sites">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;">
@@ -4515,8 +4517,8 @@
                 </div>
               </div>
               <div style="display:flex; gap:6px; width:100%;">
-                <input id="location-address-input" placeholder="Enter address or tap map" autocomplete="street-address" style="flex:1; height:28px;" onkeypress="if(event.key==='Enter'){event.preventDefault();handleManualAddressInput();}">
-                <button type="button" id="location-address-apply" class="action-btn glass-btn-info action-btn-sm" title="Search address" onclick="handleManualAddressInput()">Search</button>
+                <input id="location-address-input" placeholder="Enter address or tap map" autocomplete="street-address" style="flex:1; height:28px;" aria-describedby="address-search-disabled">
+                <button type="button" id="location-address-apply" class="action-btn glass-btn-info action-btn-sm" title="Search address" disabled>Search</button>
                 <button type="button" id="location-clear-btn" class="action-btn glass-btn-warning action-btn-sm" title="Clear location" onclick="clearLocationAddress()" style="display:none;">Clear</button>
               </div>
             </div>
@@ -5032,6 +5034,21 @@
           </button>
         </div>
       </details>
+    </div>
+
+    <div class="card" id="maps-key-card">
+      <h3 style="font-size: 16px; margin-bottom: 8px;">Google Maps key</h3>
+      <p style="font-size: 13px; color: #4b5563; line-height: 1.5; margin: 0 0 10px;">
+        Address search, suggestions, and hospital lookup use one browser key.
+        Paste the rotated key once. It is saved only in this browser under <code>iEnvi_Config</code> (localStorage field <code>GOOGLE_API_KEY</code>), not in the GitHub repo.
+        The key is still visible to this page after that, so the real protection is an HTTP referrer restriction in Google Cloud for <code>https://mikesbdj.github.io/*</code>.
+      </p>
+      <input id="maps-api-key-input" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="Paste the rotated Maps key" style="width:100%; margin-bottom:8px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" id="maps-api-key-save" class="glass-btn glass-btn-primary">Save key in this browser</button>
+        <button type="button" id="maps-api-key-clear" class="glass-btn glass-btn-neutral">Remove key</button>
+      </div>
+      <p id="maps-api-key-status" style="font-size: 12px; color: #6b7280; margin: 8px 0 0;">No key saved. Address search stays off.</p>
     </div>
 
     <div class="card">
@@ -7311,6 +7328,8 @@ CLEARANCE REQUIREMENTS: [any specific clearance distances mentioned, max 30 word
     const _addrInp = $('address'); if (_addrInp) _addrInp.addEventListener('keyup', (e)=>{ if (e.key==='Enter') searchAddress(); });
     // Removed sc-address listener
     // unified-input removed — project selection now via picker or manual entry in Step 1
+    try { bindMapsKeySettings(); } catch (e) {}
+    try { updateAddressSearchAvailability(); } catch (e) {}
     if (APP_CONFIG.GOOGLE_API_KEY) { setupPlacesAutocomplete(); }
 
   // Wire quick action buttons to existing actions
@@ -10777,12 +10796,15 @@ on('btn-dfr-save', 'click', () => {
   // are now exported to window inside init() where they are defined.
   </script>
 
-  <!-- Inline config block for easy editing (optional) -->
+  <!-- Maps key, geocode cache, and autocomplete session tokens. No key is stored here. -->
+  <script src="maps-client.js"></script>
+
+  <!-- Inline config block for easy editing (optional). Google Maps key stays empty. -->
   <script id="ienvi-config" type="application/json">
     {
       "NEARMAP_KEY": "MWFjMzQ0ZTQtNWI5ZS00Y2Q4LThkMWQtYTVkNjdhMjIyNTJm",
       "GOOGLE_CLIENT_ID": "670606274211-47a47jehgn6et0maapu5q61fve4nhts9.apps.googleusercontent.com",
-      "GOOGLE_API_KEY": "AIzaSyBNeow1wvhgjK4H1Bn-0x-KV5p24YwpTgc",
+      "GOOGLE_API_KEY": "",
       "GOOGLE_SCOPES": "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
       "DEFAULT_DRIVE_FOLDER_ID": "1crOWe2b0IzYr86PTgXrwcFsut3nNr188",
       "CADASTRE_PROXY": "",
@@ -10808,12 +10830,14 @@ on('btn-dfr-save', 'click', () => {
   });
 
   // Config loader (single-file friendly)
-  // WARNING: Move these to environment variables for production
-  // These keys should not be committed to version control
+  // The Google Maps browser key is not committed. On GitHub Pages it comes from
+  // this browser only: Settings → Google Maps key, stored in localStorage
+  // iEnvi_Config.GOOGLE_API_KEY. A browser key is still visible to the page
+  // once used, so HTTP-referrer restriction in Google Cloud is the real limit.
   var APP_CONFIG_KEYS = {
     NEARMAP_KEY: (typeof process !== 'undefined' && process.env && process.env.NEARMAP_KEY) || 'MWFjMzQ0ZTQtNWI5ZS00Y2Q4LThkMWQtYTVkNjdhMjIyNTJm',
     GOOGLE_CLIENT_ID: (typeof process !== 'undefined' && process.env && process.env.GOOGLE_CLIENT_ID) || '670606274211-47a47jehgn6et0maapu5q61fve4nhts9.apps.googleusercontent.com',
-    GOOGLE_API_KEY: (typeof process !== 'undefined' && process.env && process.env.GOOGLE_API_KEY) || 'AIzaSyBNeow1wvhgjK4H1Bn-0x-KV5p24YwpTgc',
+    GOOGLE_API_KEY: '',
     GOOGLE_AI_KEY: (typeof process !== 'undefined' && process.env && process.env.GOOGLE_AI_KEY) || ''
   };
   function qsParam(name){ try { const u=new URL(location.href); return u.searchParams.get(name)||''; } catch(e){ return ''; } }
@@ -10837,7 +10861,6 @@ on('btn-dfr-save', 'click', () => {
     // Map legacy JSON key GEMINI_API_KEY → canonical GOOGLE_AI_KEY
     if (!merged.GOOGLE_AI_KEY && merged.GEMINI_API_KEY) merged.GOOGLE_AI_KEY = merged.GEMINI_API_KEY;
     const qsNear = qsParam('nearmap'); if (qsNear) merged.NEARMAP_KEY = qsNear;
-    const qsGoogle = qsParam('google'); if (qsGoogle) merged.GOOGLE_API_KEY = qsGoogle;
     if (!merged.GOOGLE_AI_KEY) {
       const storedAi = qsParam('ai');
       if (storedAi) merged.GOOGLE_AI_KEY = storedAi;
@@ -10853,6 +10876,163 @@ on('btn-dfr-save', 'click', () => {
   };
   var APP_CONFIG = Object.assign({}, DEFAULT_CONFIG, mergedConfig());
   try { window.APP_CONFIG = APP_CONFIG; } catch(_){ }
+
+  function ienviGeocoder() {
+    if (!window.IenviMaps) return null;
+    if (!window.__ienviGeocoder) {
+      window.__ienviGeocoder = IenviMaps.createGeocoder({
+        fetchImpl: function (url, opts) { return fetch(url, opts); },
+        storage: window.localStorage,
+        getKey: function () { return (APP_CONFIG && APP_CONFIG.GOOGLE_API_KEY) || ''; }
+      });
+    }
+    return window.__ienviGeocoder;
+  }
+
+  function updateAddressSearchAvailability() {
+    var note = document.getElementById('address-search-disabled');
+    var openBtn = document.getElementById('btn-open-maps-key-settings');
+    var btn = document.getElementById('location-address-apply');
+    var has = !!(APP_CONFIG && String(APP_CONFIG.GOOGLE_API_KEY || '').trim());
+    var offText = (window.IenviMaps && IenviMaps.ADDRESS_SEARCH_OFF) || 'Address search is off. No Google Maps API key is saved in this browser. GPS, the map, and coordinates still work.';
+    if (note) {
+      note.hidden = false;
+      note.style.display = '';
+      note.style.color = has ? '#6b7280' : '#92400e';
+      note.textContent = has ? 'Use GPS or tap the map to set your site location' : offText;
+    }
+    if (openBtn) openBtn.style.display = has ? 'none' : 'inline';
+    if (btn) {
+      btn.disabled = !has;
+      btn.style.opacity = has ? '' : '0.55';
+      btn.title = has ? 'Search address' : 'Address search is off until a Maps key is saved in Settings';
+    }
+  }
+
+  function updateMapsKeyStatus() {
+    var el = document.getElementById('maps-api-key-status');
+    if (!el) return;
+    if (APP_CONFIG && String(APP_CONFIG.GOOGLE_API_KEY || '').trim()) {
+      el.textContent = 'A key is saved in this browser. Address search is on. Reload if you just replaced a key that was already used.';
+    } else {
+      el.textContent = 'No key saved. Address search stays off.';
+    }
+  }
+
+  function applyStoredMapsKey(key) {
+    var stored = loadStoredConfig();
+    if (key) stored.GOOGLE_API_KEY = key;
+    else delete stored.GOOGLE_API_KEY;
+    saveStoredConfig(stored);
+    APP_CONFIG.GOOGLE_API_KEY = key || '';
+    try { window.APP_CONFIG = APP_CONFIG; } catch (_) {}
+    var input = document.getElementById('maps-api-key-input');
+    if (input) input.value = '';
+    var box = document.getElementById('address-suggest');
+    if (!key && box) box.style.display = 'none';
+    updateMapsKeyStatus();
+    updateAddressSearchAvailability();
+    if (key) {
+      try { setupPlacesAutocomplete(); } catch (_) {}
+    }
+  }
+
+  function saveGoogleMapsApiKey(raw) {
+    var key = String(raw || '').trim();
+    if (!key) {
+      if (typeof showToast === 'function') showToast('Paste a Google Maps API key first.', 'warn');
+      return;
+    }
+    applyStoredMapsKey(key);
+    if (typeof showToast === 'function') showToast('Maps key saved in this browser.', 'success');
+  }
+
+  function clearGoogleMapsApiKey() {
+    applyStoredMapsKey('');
+    if (typeof showToast === 'function') showToast('Maps key removed from this browser. Address search is off.', 'info');
+  }
+
+  function openMapsKeySettings() {
+    if (typeof openModal === 'function') openModal('settings-modal');
+    var input = document.getElementById('maps-api-key-input');
+    if (input) {
+      try { input.focus(); } catch (_) {}
+    }
+  }
+
+  function bindMapsKeySettings() {
+    var saveBtn = document.getElementById('maps-api-key-save');
+    var clearBtn = document.getElementById('maps-api-key-clear');
+    var input = document.getElementById('maps-api-key-input');
+    var openBtn = document.getElementById('btn-open-maps-key-settings');
+    if (saveBtn && !saveBtn.dataset.bound) {
+      saveBtn.dataset.bound = '1';
+      saveBtn.addEventListener('click', function () { saveGoogleMapsApiKey(input ? input.value : ''); });
+    }
+    if (clearBtn && !clearBtn.dataset.bound) {
+      clearBtn.dataset.bound = '1';
+      clearBtn.addEventListener('click', clearGoogleMapsApiKey);
+    }
+    if (input && !input.dataset.bound) {
+      input.dataset.bound = '1';
+      input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          saveGoogleMapsApiKey(input.value);
+        }
+      });
+    }
+    if (openBtn && !openBtn.dataset.bound) {
+      openBtn.dataset.bound = '1';
+      openBtn.addEventListener('click', openMapsKeySettings);
+    }
+    updateMapsKeyStatus();
+    updateAddressSearchAvailability();
+  }
+
+  async function ensureMapsPlacesLoaded() {
+    var key = String((APP_CONFIG && APP_CONFIG.GOOGLE_API_KEY) || '').trim();
+    if (!key || !window.IenviMaps) return null;
+    if (window.__mapsKeyLoaded && window.__mapsKeyLoaded !== key) {
+      if (typeof showToast === 'function') showToast('Reload the page to use the replaced Maps key.', 'warn');
+      return null;
+    }
+    if (window.google && google.maps && google.maps.places && google.maps.places.AutocompleteSessionToken) {
+      window.__mapsKeyLoaded = key;
+      return google.maps.places;
+    }
+    IenviMaps.installMapsLoader(key, document, window);
+    window.__mapsKeyLoaded = key;
+    try {
+      var ready = window.__ienviMapsReady;
+      var timeout = new Promise(function (_, reject) {
+        setTimeout(function () { reject(new Error('maps-timeout')); }, 12000);
+      });
+      var places = await Promise.race([ready, timeout]);
+      return places || (window.google && google.maps && google.maps.places) || null;
+    } catch (e) {
+      console.warn('Maps library failed to load', e);
+      return null;
+    }
+  }
+
+  async function lookupFormattedAddress(lat, lng) {
+    if (APP_CONFIG.GOOGLE_API_KEY && typeof ienviGeocoder === 'function') {
+      var geo = ienviGeocoder();
+      if (geo) {
+        var looked = await geo.reverseGeocode(lat, lng);
+        if (looked && looked.ok && looked.result && looked.result.formattedAddress && !isPlusCode(looked.result.formattedAddress)) {
+          return looked.result.formattedAddress;
+        }
+        return '';
+      }
+    }
+    var response = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lng));
+    var data = await response.json();
+    var raw = (data && data.display_name) || '';
+    if (raw && !isPlusCode(raw)) return raw;
+    return '';
+  }
 
   // ─── Lightweight Error Logger ───
   // Keeps last 50 errors in memory for debugging; viewable via console: iEnviErrors.list()
@@ -11259,6 +11439,8 @@ on('btn-dfr-save', 'click', () => {
         try { window.APP_CONFIG = APP_CONFIG; } catch(_){ }
         try { maybeEnableGoogleButtons(); } catch(_){ }
         try { updateSaveTargetDisplay(); } catch(_){ }
+        try { updateAddressSearchAvailability(); } catch(_){ }
+        try { if (APP_CONFIG.GOOGLE_API_KEY) setupPlacesAutocomplete(); } catch(_){ }
       } catch(err) {
         // Silently ignore errors for runtime keys - they're optional
       }
@@ -13765,7 +13947,7 @@ on('btn-dfr-save', 'click', () => {
             // must be done via Drive API separately
 
             console.log('Creating picker builder...');
-            console.log('API Key:', APP_CONFIG.GOOGLE_API_KEY ? APP_CONFIG.GOOGLE_API_KEY.substring(0, 10) + '...' : 'missing');
+            console.log('API Key:', APP_CONFIG.GOOGLE_API_KEY ? 'saved in this browser' : 'missing');
             console.log('Client ID:', APP_CONFIG.GOOGLE_CLIENT_ID ? APP_CONFIG.GOOGLE_CLIENT_ID.substring(0, 10) + '...' : 'missing');
             console.log('Token:', token ? token.substring(0, 10) + '...' : 'missing');
             console.log('google.picker available:', !!window.google?.picker);
@@ -18383,25 +18565,20 @@ on('btn-dfr-save', 'click', () => {
   // Search address and show confirmation
   async function searchAddressWithConfirm(query) {
     if (!APP_CONFIG.GOOGLE_API_KEY) {
-      showToast('Address search requires Google key', 'warn');
+      showToast(window.IenviMaps ? IenviMaps.ADDRESS_SEARCH_OFF : 'Address search is off. No Google Maps API key is saved in this browser.', 'warn');
       return;
     }
 
     try {
-      const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${APP_CONFIG.GOOGLE_API_KEY}`);
-      const j = await resp.json();
-      const hit = j.results && j.results[0];
-
-      if (!hit) {
-        showToast('No results found', 'info');
+      const geo = ienviGeocoder();
+      const looked = geo ? await geo.geocode(query) : { ok: false, reason: 'no_key' };
+      if (!looked.ok || !looked.result) {
+        const failure = window.IenviMaps && IenviMaps.geocodeFailureMessage(looked);
+        showToast(failure || 'No results found', 'info');
         return;
       }
 
-      const loc = hit.geometry.location;
-      const address = hit.formatted_address || query;
-
-      // Show confirmation popup instead of record chooser
-      showLocationConfirmation(loc.lat, loc.lng, address);
+      showLocationConfirmation(looked.result.lat, looked.result.lng, looked.result.formattedAddress || query);
 
     } catch(e) {
       console.error('Address search error:', e);
@@ -20346,7 +20523,11 @@ function addJSEARow() {
   async function callGeminiAPI(text, promptType, isEnhancedAnalysis = false) {
     try {
       // Use API key from config
-      const GEMINI_KEY = APP_CONFIG.GOOGLE_API_KEY;
+      const GEMINI_KEY = (typeof getAiKey === 'function') ? getAiKey() : '';
+      if (!GEMINI_KEY) {
+        console.warn('Gemini skipped — no AI key');
+        return enhancedFallbackExtraction(text, promptType);
+      }
       // Use Flash for BYDA (structured extraction — speed matters), Pro for proposals (deep analysis)
       const isProposalAnalysis = promptType === 'proposal';
       const MODEL = (promptType === 'BYDA') ? 'gemini-2.5-flash-preview-05-20' : 'gemini-3.1-pro-preview';
@@ -21520,7 +21701,8 @@ ACTIVITIES:
   async function refineWorkScopeWithAI(rawText) {
     if (!rawText || rawText.length < 50) return rawText;
 
-    const GEMINI_KEY = APP_CONFIG.GOOGLE_API_KEY;
+    const GEMINI_KEY = (typeof getAiKey === 'function') ? getAiKey() : '';
+    if (!GEMINI_KEY) return rawText;
     const MODEL = 'gemini-3-flash-preview';
 
     try {
@@ -21982,7 +22164,11 @@ ACTIVITIES:
   // Call Gemini Vision API for image analysis
   async function callGeminiVisionAPI(base64Image) {
     try {
-      const GEMINI_KEY = APP_CONFIG.GOOGLE_API_KEY;
+      const GEMINI_KEY = (typeof getAiKey === 'function') ? getAiKey() : '';
+      if (!GEMINI_KEY) {
+        console.warn('Gemini skipped — no AI key');
+        return 'AI image analysis is off — no AI key is saved in this browser.';
+      }
 
       const prompt = `Analyze this BYDA (Dial Before You Dig) document image for underground services information.
 
@@ -22722,28 +22908,9 @@ If this appears to be a cover page, index, or text-only page, respond with "TEXT
           // Set the location (move the pin)
           setLocation(e.latlng.lat, e.latlng.lng, null, {showPopup: false});
 
-          // Reverse geocode to get address
+          // Reverse geocode to get address (Google when a key is saved, otherwise OpenStreetMap)
           let address = '';
-          if (APP_CONFIG.GOOGLE_API_KEY) {
-            const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${e.latlng.lat},${e.latlng.lng}&key=${APP_CONFIG.GOOGLE_API_KEY}`;
-            const response = await fetch(url);
-            const data = await response.json();
-            if (data.status === 'OK' && data.results && data.results.length) {
-              // Skip Plus Code results — find first real street address
-              for (const result of data.results) {
-                if (result.formatted_address && !isPlusCode(result.formatted_address)) {
-                  address = result.formatted_address;
-                  break;
-                }
-              }
-            }
-          } else {
-            // Fallback to OpenStreetMap
-            const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${e.latlng.lat}&lon=${e.latlng.lng}`);
-            const data = await response.json();
-            const raw = data.display_name || '';
-            if (!isPlusCode(raw)) address = raw;
-          }
+          try { address = await lookupFormattedAddress(e.latlng.lat, e.latlng.lng); } catch (_) { address = ''; }
 
           if (address && !isPlusCode(address) && locInput) {
             locInput.value = address;
@@ -23586,31 +23753,38 @@ If this appears to be a cover page, index, or text-only page, respond with "TEXT
   async function searchAddress(q, skipMapPin = false) {
     const val = (q || $('location-address-input')?.value || $('address')?.value || '').trim();
     if (!val) { showToast('Enter an address to search', 'warn'); return; }
+    if (!searchAddress._dedupe) searchAddress._dedupe = { key: '', at: 0 };
+    if (window.IenviMaps && IenviMaps.dedupeHit(searchAddress._dedupe, val + '|' + (skipMapPin ? '1' : '0'), Date.now(), 800)) return;
 
     // Show clear button when address is set
     const clearBtn = $('location-clear-btn');
     if (clearBtn) clearBtn.style.display = val ? 'inline-flex' : 'none';
 
+    const coords = typeof parseLatLngString === 'function' ? parseLatLngString(val) : null;
+    if (coords) {
+      if (!skipMapPin) {
+        setLocation(coords.lat, coords.lng, null, { showPopup: true });
+        if (map) { try { map.flyTo([coords.lat, coords.lng], 17); } catch(_){} }
+      }
+      return;
+    }
+
     if (!APP_CONFIG.GOOGLE_API_KEY) {
-      // Offline fallback - just set the text as-is
+      // Keep the typed text, but do not call Google.
       const addressInput = $('location-address-input');
       if (addressInput) addressInput.value = val;
 
-      // Update DFR site address
       const dfrAddress = document.getElementById('dfr-site-address');
       if (dfrAddress) dfrAddress.value = val;
 
-      // Save address to localStorage
       try {
         localStorage.setItem('iEnvi_siteAddress', val);
-        console.log('Saved offline address:', val);
       } catch(e) {}
 
-      showToast('Offline mode - address saved without verification', 'info');
+      showToast(window.IenviMaps ? IenviMaps.ADDRESS_SEARCH_OFF : 'Address search is off. No Google Maps API key is saved in this browser.', 'warn');
       updateSiteInfoDisplay();
       updateQuickSummary();
 
-      // Update the location section display
       const locationSiteAddress = document.getElementById('location-site-address');
       if (locationSiteAddress) {
         locationSiteAddress.textContent = val;
@@ -23620,41 +23794,29 @@ If this appears to be a cover page, index, or text-only page, respond with "TEXT
     }
 
     try {
-      const coords = typeof parseLatLngString === 'function' ? parseLatLngString(val) : null;
-      if (coords) {
-        if (!skipMapPin) {
-          setLocation(coords.lat, coords.lng, null, { showPopup: true });
-          if (map) { try { map.flyTo([coords.lat, coords.lng], 17); } catch(_){} }
-        }
-        return;
+      const geo = ienviGeocoder();
+      const looked = geo ? await geo.geocode(val) : { ok: false, reason: 'no_key' };
+      if (!looked.ok || !looked.result) {
+        const failure = window.IenviMaps && IenviMaps.geocodeFailureMessage(looked);
+        if (failure) { showToast(failure, looked.status === 'REQUEST_DENIED' ? 'error' : 'info'); return; }
+        throw new Error(looked.reason || 'geocode');
       }
 
-      const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(val)}&key=${APP_CONFIG.GOOGLE_API_KEY}`);
-      const j = await resp.json();
-      const hit = j.results && j.results[0];
-      if (!hit) { showToast('No results found', 'info'); return; }
-
-      // Update the address field with the formatted address from Google
-      const formattedAddress = hit.formatted_address || '';
+      const formattedAddress = looked.result.formattedAddress || '';
       const addressInput = $('location-address-input');
       if (addressInput && formattedAddress) {
         addressInput.value = formattedAddress;
       }
 
-      // Update DFR site address
       const dfrAddress = document.getElementById('dfr-site-address');
       if (dfrAddress) dfrAddress.value = formattedAddress;
 
-      // Save address to localStorage
       const addressToSave = formattedAddress || val;
       try {
         localStorage.setItem('iEnvi_siteAddress', addressToSave);
-        console.log('Saved searched address:', addressToSave);
       } catch(e) {}
 
-      // Show location confirmation
-      const loc = hit.geometry.location;
-      showAddressConfirmation(loc.lat, loc.lng, formattedAddress);
+      showAddressConfirmation(looked.result.lat, looked.result.lng, formattedAddress);
 
       updateSiteInfoDisplay();
       updateQuickSummary();
@@ -23817,74 +23979,216 @@ If this appears to be a cover page, index, or text-only page, respond with "TEXT
     showToast('Location cleared', 'info');
   }
 
-  // Google Places Autocomplete for suggestions
-  async function setupPlacesAutocomplete(){
-    try {
-      if (!APP_CONFIG.GOOGLE_API_KEY) return;
-      if (window.google && window.google.maps && window.google.maps.places) { attach(); return; }
-      await new Promise((resolve)=>{ const s=document.createElement('script'); s.src=`https://maps.googleapis.com/maps/api/js?key=${APP_CONFIG.GOOGLE_API_KEY}&libraries=places&v=beta&loading=async`; s.async=true; s.defer=true; s.onload=resolve; s.onerror=resolve; document.head.appendChild(s); });
-      attach();
-    } catch(e){}
-    function attach(){
-      try {
-        const inp = $('sc-address'); if (!inp || !(window.google&&google.maps&&google.maps.places)) return;
-        // Prefer new PlaceAutocompleteElement if available
-        if (google.maps.places && google.maps.places.PlaceAutocompleteElement){
-          try {
-            const pae = new google.maps.places.PlaceAutocompleteElement();
-            pae.id = 'sc-address-autocomplete';
-            pae.style.width = '100%';
-            pae.setAttribute('aria-label','Search address');
-            pae.value = inp.value || '';
-            pae.fields = ['formatted_address','location'];
-            pae.types = ['geocode'];
-            // Insert after the input, and hide the original input
-            inp.style.display = 'none';
-            inp.parentElement && inp.parentElement.insertBefore(pae, inp.nextSibling);
-            pae.addEventListener('gmp-placeselect', (ev)=>{
-              try {
-                const plc = ev && (ev.place || (ev.detail && ev.detail.place)) || pae.getPlace && pae.getPlace();
-                const loc = plc && (plc.location || plc.latLng || (plc.geometry && plc.geometry.location));
-                if (loc){
-                  const lat = typeof loc.lat === 'function' ? loc.lat() : (loc.lat || 0);
-                  const lng = typeof loc.lng === 'function' ? loc.lng() : (loc.lng || 0);
-                  setLocation(lat, lng, null, {showPopup:false}); try{ if (map) map.flyTo([lat,lng], 17); }catch(e){}
-                  const addr = plc.formatted_address || plc.name || '';
-                  if (addr) {
-                    const a=$('dfr-site-address'); if (a) a.value = addr;
-                    const b=$('location-address-input'); if (b) b.value = addr;
-                    const c=$('safety-site'); if (c) c.value = addr;
-                    try { localStorage.setItem('iEnvi_siteAddress', addr); } catch(_){}
-                  }
-                  showToast('Location found','success');
-                }
-              } catch(_){}
-            });
-          } catch(_){}
-        } else {
-          // Fallback to classic Autocomplete
-          const ac = new google.maps.places.Autocomplete(inp, { fields:['geometry','formatted_address','name'] });
-          ac.addListener('place_changed', ()=>{
-            try {
-              const plc = ac.getPlace();
-              if (plc && plc.geometry && plc.geometry.location){
-                const lat = plc.geometry.location.lat();
-                const lng = plc.geometry.location.lng();
-                setLocation(lat, lng, null, {showPopup:false}); try{ if (map) map.flyTo([lat,lng], 17); }catch(e){}
-                const addr = plc.formatted_address || plc.name || '';
-                if (addr) {
-                  const a=$('dfr-site-address'); if (a) a.value = addr;
-                  const b=$('location-address-input'); if (b) b.value = addr;
-                  const c=$('safety-site'); if (c) c.value = addr;
-                  try { localStorage.setItem('iEnvi_siteAddress', addr); } catch(_){}
-                }
-                showToast('Location found','success');
-              }
-            } catch(e){}
-          });
-        }
-      } catch(e){}
+  function suggestionLabel(suggestion) {
+    var prediction = suggestion && (suggestion.placePrediction || suggestion);
+    if (!prediction) return '';
+    function textOf(value) {
+      if (!value) return '';
+      if (typeof value === 'string') return value;
+      if (typeof value.text === 'string') return value.text;
+      if (typeof value.toString === 'function') {
+        var rendered = value.toString();
+        if (rendered && rendered !== '[object Object]') return rendered;
+      }
+      return '';
     }
+    var full = textOf(prediction.text);
+    if (full) return full;
+    return [textOf(prediction.mainText), textOf(prediction.secondaryText)].filter(Boolean).join(', ');
+  }
+
+  function ensureAddressSuggestBox() {
+    var box = document.getElementById('address-suggest');
+    if (box) return box;
+    box = document.createElement('div');
+    box.id = 'address-suggest';
+    box.setAttribute('role', 'listbox');
+    box.style.cssText = 'display:none;position:fixed;z-index:10001;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow:auto;';
+    document.body.appendChild(box);
+    return box;
+  }
+
+  function positionAddressSuggestBox(input, box) {
+    var rect = input.getBoundingClientRect();
+    box.style.left = Math.max(8, rect.left) + 'px';
+    box.style.top = (rect.bottom + 4) + 'px';
+    box.style.width = Math.max(180, rect.width) + 'px';
+  }
+
+  function highlightSuggest(box, active) {
+    var rows = box.children;
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].style.background = i === active ? '#eff6ff' : '#fff';
+    }
+  }
+
+  function applyAutocompletePlace(place) {
+    if (!place || !Number.isFinite(Number(place.lat)) || !Number.isFinite(Number(place.lng))) return;
+    var addr = place.formattedAddress || '';
+    var input = document.getElementById('location-address-input');
+    if (input && addr) {
+      input.dataset.fromSuggestion = '1';
+      input.value = addr;
+    }
+    var dfr = document.getElementById('dfr-site-address');
+    if (dfr && addr) dfr.value = addr;
+    var safety = document.getElementById('safety-site');
+    if (safety && addr) safety.value = addr;
+    try { if (addr) localStorage.setItem('iEnvi_siteAddress', addr); } catch (_) {}
+    if (typeof setLocation === 'function') setLocation(Number(place.lat), Number(place.lng), null, { showPopup: false });
+    try { if (map) map.flyTo([Number(place.lat), Number(place.lng)], 17); } catch (_) {}
+    try { updateSiteInfoDisplay(); } catch (_) {}
+    try { updateQuickSummary(); } catch (_) {}
+    var box = document.getElementById('address-suggest');
+    if (box) box.style.display = 'none';
+    if (input) input.dataset.suggestOpen = '0';
+    if (typeof showToast === 'function') showToast('Location found', 'success');
+  }
+
+  function addressAutocompleteController() {
+    if (window.__addrAc) return window.__addrAc;
+    if (!window.IenviMaps) return null;
+    var placesLib = null;
+    window.__addrAc = IenviMaps.createAutocompleteController({
+      getKey: function () { return APP_CONFIG.GOOGLE_API_KEY; },
+      ensureReady: async function () {
+        placesLib = await ensureMapsPlacesLoaded();
+        if (!placesLib || !placesLib.AutocompleteSessionToken || !placesLib.AutocompleteSuggestion) {
+          throw new Error('places-unavailable');
+        }
+      },
+      tokenFactory: function () { return new placesLib.AutocompleteSessionToken(); },
+      fetchSuggestions: async function (request) {
+        var response = await placesLib.AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+        return (response && response.suggestions) || [];
+      },
+      fetchPlace: async function (suggestion) {
+        var prediction = suggestion.placePrediction || suggestion;
+        if (!prediction || typeof prediction.toPlace !== 'function') throw new Error('no-prediction');
+        var place = prediction.toPlace();
+        await place.fetchFields({ fields: ['formattedAddress', 'location'] });
+        var loc = place.location;
+        if (!loc) throw new Error('no-location');
+        var lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
+        var lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
+        var formattedAddress = place.formattedAddress || '';
+        if (formattedAddress && window.IenviMaps) {
+          try { IenviMaps.rememberForward(localStorage, formattedAddress, { lat: lat, lng: lng, formattedAddress: formattedAddress }); } catch (_) {}
+        }
+        return { lat: lat, lng: lng, formattedAddress: formattedAddress };
+      }
+    });
+    return window.__addrAc;
+  }
+
+  // Suggestions use an AutocompleteSessionToken so keystrokes plus the chosen
+  // place count as one session. The Maps script is not loaded until a key is
+  // saved and the user types at least 3 characters.
+  function setupPlacesAutocomplete() {
+    var input = document.getElementById('location-address-input');
+    if (!input || input.dataset.acBound === '1') return;
+    if (!window.IenviMaps || !String(APP_CONFIG.GOOGLE_API_KEY || '').trim()) return;
+    var controller = addressAutocompleteController();
+    if (!controller) return;
+    input.dataset.acBound = '1';
+    var box = ensureAddressSuggestBox();
+    var items = [];
+    var active = -1;
+    var timer = null;
+
+    function closeBox() {
+      box.style.display = 'none';
+      input.dataset.suggestOpen = '0';
+      active = -1;
+    }
+
+    function render(suggestions) {
+      box.textContent = '';
+      items = suggestions || [];
+      if (!items.length) { closeBox(); return; }
+      items.forEach(function (suggestion, index) {
+        var row = document.createElement('button');
+        row.type = 'button';
+        row.setAttribute('role', 'option');
+        row.textContent = suggestionLabel(suggestion) || 'Address';
+        row.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 10px;border:0;background:#fff;cursor:pointer;font-size:13px;';
+        row.addEventListener('mousedown', function (ev) {
+          ev.preventDefault();
+          choose(index);
+        });
+        box.appendChild(row);
+      });
+      positionAddressSuggestBox(input, box);
+      box.style.display = 'block';
+      input.dataset.suggestOpen = '1';
+      active = -1;
+    }
+
+    async function choose(index) {
+      var suggestion = items[index];
+      closeBox();
+      if (!suggestion) return;
+      try {
+        var result = await controller.select(suggestion);
+        if (result && result.ok && result.place) applyAutocompletePlace(result.place);
+      } catch (e) {
+        console.warn('Address suggestion failed', e);
+        if (typeof showToast === 'function') showToast('Could not use that suggestion. Try Search.', 'warn');
+      }
+    }
+
+    input.addEventListener('input', function () {
+      if (input.dataset.fromSuggestion === '1') {
+        delete input.dataset.fromSuggestion;
+        return;
+      }
+      clearTimeout(timer);
+      var value = input.value || '';
+      if (!String(APP_CONFIG.GOOGLE_API_KEY || '').trim() || value.trim().length < 3) {
+        closeBox();
+        return;
+      }
+      timer = setTimeout(async function () {
+        try {
+          var result = await controller.query(value);
+          if (!result || !result.ok) {
+            if (!result || (result.reason !== 'stale' && result.reason !== 'short')) closeBox();
+            return;
+          }
+          render(result.suggestions);
+        } catch (e) {
+          closeBox();
+        }
+      }, 300);
+    });
+
+    input.addEventListener('keydown', function (ev) {
+      if (input.dataset.suggestOpen !== '1') return;
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        active = Math.min(items.length - 1, active + 1);
+        highlightSuggest(box, active);
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        active = Math.max(0, active - 1);
+        highlightSuggest(box, active);
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        closeBox();
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        choose(active >= 0 ? active : 0);
+      }
+    }, true);
+
+    document.addEventListener('click', function (ev) {
+      if (ev.target === input || box.contains(ev.target)) return;
+      closeBox();
+    });
   }
 
   // Weather autofill (no API key required)
@@ -26220,23 +26524,7 @@ If this appears to be a cover page, index, or text-only page, respond with "TEXT
   async function reverseGeocodeAndStore(lat, lng, targetId = 'location-address-input'){
     let addr = '';
     try {
-      if (APP_CONFIG.GOOGLE_API_KEY){
-        const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${encodeURIComponent(lat)},${encodeURIComponent(lng)}&key=${APP_CONFIG.GOOGLE_API_KEY}`;
-        const r = await fetch(url); const j = await r.json();
-        if (j.status==='OK' && j.results && j.results.length) {
-          // Skip Plus Code results — find first real street address
-          for (const result of j.results) {
-            if (result.formatted_address && !isPlusCode(result.formatted_address)) {
-              addr = result.formatted_address;
-              break;
-            }
-          }
-        }
-      } else {
-        const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`);
-        const j = await r.json();
-        addr = j && (j.display_name||'');
-      }
+      addr = await lookupFormattedAddress(lat, lng);
       if (addr && !isPlusCode(addr)) {
         const targetEl = $(targetId) || $('location-address-input') || $('dfr-site-address');
         if (targetEl) targetEl.value = addr;
@@ -28125,6 +28413,7 @@ function collectDfrFromForm(){
 
   // Expose SiteSyncManager for cross-script-block access
   window.SiteSyncManager = SiteSyncManager;
+  try { bindMapsKeySettings(); } catch (e) {}
   </script>
 
   <!-- Numeric Keypad for gloved hands -->
