@@ -1,0 +1,7 @@
+{
+  "name": "field-tool",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/maps-client.test.js"
+  }
+}
